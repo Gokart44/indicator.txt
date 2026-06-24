@@ -1,0 +1,112 @@
+//@version=5
+indicator("Liquid Charts - Aggressive Scalper Pro", overlay=true, max_labels_count=500)
+
+// ==========================================
+// INPUTS & USER CONFIGURATION
+// ==========================================
+// Ribbon Settings (Based on Dynamic Volatility Ribbon concepts from image.png)
+ribbonSrc   = input.source(close, title="Ribbon Source")
+len1        = input.int(3, title="Ribbon Fast Length 1")
+len2        = input.int(5, title="Ribbon Fast Length 2")
+len3        = input.int(8, title="Ribbon Medium Length 3")
+len4        = input.int(10, title="Ribbon Medium Length 4")
+len5        = input.int(12, title="Ribbon Slow Length 5")
+len6        = input.int(15, title="Ribbon Slow Length 6")
+
+// Aggressive Scalper Signal Settings
+atrLength   = input.int(10, title="ATR Volatility Length")
+atrMult     = input.float(1.2, title="Reversal Sensitivity (Lower = More Aggressive)")
+
+// ==========================================
+// CORE CALCULATIONS
+// ==========================================
+// Calculate Ribbon Lines
+ema1 = ta.ema(ribbonSrc, len1)
+ema2 = ta.ema(ribbonSrc, len2)
+ema3 = ta.ema(ribbonSrc, len3)
+ema4 = ta.ema(ribbonSrc, len4)
+ema5 = ta.ema(ribbonSrc, len5)
+ema6 = ta.ema(ribbonSrc, len6)
+
+// Plot Ribbon Lines (Fading from Green to Red based on trend)
+isBullRibbon = ema1 > ema6
+ribbonColor  = isBullRibbon ? color.new(color.green, 60) : color.new(color.red, 60)
+
+plot(ema1, color=ribbonColor, linewidth=1)
+plot(ema2, color=ribbonColor, linewidth=1)
+plot(ema3, color=ribbonColor, linewidth=1)
+plot(ema4, color=ribbonColor, linewidth=1)
+plot(ema5, color=ribbonColor, linewidth=1)
+plot(ema6, color=ribbonColor, linewidth=2)
+
+// Aggressive Reversal Engine (Trailing Stop Style for Quick Flips)
+atrValue = ta.atr(atrLength)
+var float trailingStop = na
+var int trendDirection = 0 // 1 = Bullish, -1 = Bearish
+
+if na(trailingStop)
+    trailingStop := close
+
+// Logic for fast-flipping momentum reversals
+if trendDirection <= 0 and close > trailingStop
+    trendDirection := 1
+    trailingStop := close - (atrValue * atrMult)
+else if trendDirection >= 0 and close < trailingStop
+    trendDirection := -1
+    trailingStop := close + (atrValue * atrMult)
+else
+    if trendDirection == 1
+        trailingStop := math.max(trailingStop, close - (atrValue * atrMult))
+    else
+        trailingStop := math.min(trailingStop, close + (atrValue * atrMult))
+
+// Signal Triggers
+bool callSignal = ta.change(trendDirection) > 0
+bool putSignal  = ta.change(trendDirection) < 0
+
+// ==========================================
+// VISUALIZATIONS & LABELS
+// ==========================================
+// Plot Call/Put Shapes similar to image.png
+plotshape(callSignal, title="CALL Signal", style=shape.labelup, location=location.belowbar, color=color.green, text="🚀 CALL", textcolor=color.white, size=size.normal)
+plotshape(putSignal, title="PUT Signal", style=shape.labeldown, location=location.abovebar, color=color.red, text="📉 PUT", textcolor=color.white, size=size.normal)
+
+// ==========================================
+// REAL-TIME DASHBOARD (Bottom Right Panel)
+// ==========================================
+var table dashTable = table.new(position.bottom_right, 2, 6, bgcolor=color.new(color.black, 20), border_color=color.gray, border_width=1)
+
+if barstate.islast
+    // Header Style
+    table.cell(dashTable, 0, 0, "METRIC", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+    table.cell(dashTable, 1, 0, "LIVE STATUS", bgcolor=color.gray, text_color=color.white, text_size=size.small)
+    
+    // Row 1: Trend Mode
+    table.cell(dashTable, 0, 1, "TREND MODE:", text_color=color.white, text_size=size.small, text_align=text.align_left)
+    table.cell(dashTable, 1, 1, "ACTIVE", bgcolor=color.navy, text_color=color.white, text_size=size.small)
+    
+    // Row 2: Market Direction
+    table.cell(dashTable, 0, 2, "MARKET DIRECTION:", text_color=color.white, text_size=size.small, text_align=text.align_left)
+    table.cell(dashTable, 1, 2, trendDirection == 1 ? "BULLISH RALLY" : "BEARISH CRASH", bgcolor=trendDirection == 1 ? color.green : color.red, text_color=color.white, text_size=size.small)
+    
+    // Row 3: Bias Percentage (Dynamically calculated based on close vs ribbon)
+    float ribbonMid = (ema1 + ema6) / 2
+    float biasPct = math.min(100, math.max(50, (math.abs(close - ribbonMid) / ribbonMid) * 1000))
+    string biasText = str.tostring(trendDirection == 1 ? "UPTREND (" : "DOWNTREND (") + str.tostring(biasPct, "0") + "%)"
+    
+    table.cell(dashTable, 0, 3, "DIRECTION BIAS:", text_color=color.white, text_size=size.small, text_align=text.align_left)
+    table.cell(dashTable, 1, 3, biasText, bgcolor=trendDirection == 1 ? color.green : color.red, text_color=color.white, text_size=size.small)
+    
+    // Row 4: Action Orders
+    table.cell(dashTable, 0, 4, "MATCH ORDERS:", text_color=color.white, text_size=size.small, text_align=text.align_left)
+    table.cell(dashTable, 1, 4, trendDirection == 1 ? "KEEP RIDING CALL" : "KEEP RIDING PUT", bgcolor=trendDirection == 1 ? color.green : color.red, text_color=color.white, text_size=size.small)
+    
+    // Row 5: Expiry Target
+    table.cell(dashTable, 0, 5, "EXPIRY CLOCK:", text_color=color.white, text_size=size.small, text_align=text.align_left)
+    table.cell(dashTable, 1, 5, "60 - 120 SECONDS", bgcolor=color.olive, text_color=color.white, text_size=size.small)
+
+// ==========================================
+// WEBHOOK / AUTOMATION ALERTS
+// ==========================================
+alertcondition(callSignal, title="Aggressive CALL Trigger", message="{'action': 'buy', 'type': 'scalp', 'duration': '60s'}")
+alertcondition(putSignal, title="Aggressive PUT Trigger", message="{'action': 'sell', 'type': 'scalp', 'duration': '60s'}")
